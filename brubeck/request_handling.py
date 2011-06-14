@@ -6,13 +6,13 @@ doing and this code base represents where my mind has wandered with regard to
 concurrency.
 
 If you are building a message handling system you should import this class
-before anything else to guarantee the eventlet code is run first.
+before anything else to guarantee the gevent code is run first.
 
 See github.com/j2labs/brubeck for more information.
 """
+
 import gevent.pool
 from gevent import spawn
-
 
 from . import version
 
@@ -53,6 +53,7 @@ def http_response(body, code, status, headers):
     headers['Content-Length'] = content_length
     payload['headers'] = "\r\n".join('%s: %s' % (k,v) for k,v in
                                      headers.items())
+
     return HTTP_FORMAT % payload
 
 ### Knowledge of `to_bytes` and `to_unicode` should be together
@@ -169,7 +170,7 @@ class MessageHandler(object):
 
     def __init__(self, application, message, *args, **kwargs):
         """A MessageHandler is called at two major points, with regard to the
-        eventlet scheduler. __init__ is the first point, which is responsible
+        gevent scheduler. __init__ is the first point, which is responsible
         for bootstrapping the state of a single handler.
 
         __call__ is the second major point.
@@ -261,7 +262,7 @@ class MessageHandler(object):
         self._finished = True
         return self.render(status_code=status_code)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self):
         """This function handles mapping the request type to a function on
         the request handler.
 
@@ -288,7 +289,9 @@ class MessageHandler(object):
 
             # Call the function we settled on
             try:
-                rendered = fun(*args, **kwargs)
+                if not hasattr(self, '_url_args') or self._url_args is None:
+                    self._url_args = []
+                rendered = fun(*self._url_args)
                 if rendered is None:
                     logging.debug('Handler had no return value: %s' % fun)
                     return ''
@@ -617,7 +620,7 @@ class Brubeck(object):
             """Decorates a function by adding it to the routing table and adding
             code to check the HTTP Method used.
             """
-            def check_method(app, msg):
+            def check_method(app, msg, *args):
                 """Create new method which checks the HTTP request type.
                 If URL matches, but unsupported request type is used an
                 unsupported error is thrown.
@@ -628,7 +631,7 @@ class Brubeck(object):
                 if msg.method not in method:
                     return self.base_handler(app, msg).unsupported()
                 else:
-                    return kallable(app, msg)
+                    return kallable(app, msg, *args)
                 
             self.add_route_rule(url_pattern, check_method)
             return check_method
@@ -649,14 +652,21 @@ class Brubeck(object):
         """
         handler = None
         for (regex, kallable) in self._routes:
-            if regex.search(message.path) is not None:
+            url_check = regex.match(message.path)
+
+            if url_check:
+                # Default must be empty list - `None` will fail
+                url_args = url_check.groups()
+
                 if inspect.isclass(kallable):
                     # Handler classes must be instantiated
                     handler = kallable(self, message)
+                    # Attach url args to handler
+                    handler._url_args = url_args
                     return handler
                 else:
                     # Can't instantiate a function
-                    handler = lambda: kallable(self, message)
+                    handler = lambda: kallable(self, message, *url_args)
                     return handler
             
         if handler is None:
