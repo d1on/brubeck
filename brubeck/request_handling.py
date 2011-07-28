@@ -36,12 +36,6 @@ from mongrel2 import Mongrel2Connection
 ### Common helpers
 ###
 
-def curtime():
-    """This funciton is the central method for getting the current time. It
-    represents the time in milliseconds and the timezone is UTC.
-    """
-    return long(time.time() * 1000)
-
 HTTP_FORMAT = "HTTP/1.1 %(code)s %(status)s\r\n%(headers)s\r\n\r\n%(body)s"
 def http_response(body, code, status, headers):
     """Renders arguments into an HTTP response.
@@ -421,13 +415,13 @@ class WebMessageHandler(MessageHandler):
         """Retrieve a cookie from message, if present, else fallback to
         `default` keyword. Accepts a secret key to validate signed cookies.
         """
-        value = None
+        value = default
         if key in self.message.cookies:
             value = self.message.cookies[key].value
         if secret and value:
             dec = cookie_decode(value, secret) 
             return dec[1] if dec and dec[0] == key else None        
-        return default    
+        return value
 
     ### Outgoing cookie functions
 
@@ -438,7 +432,7 @@ class WebMessageHandler(MessageHandler):
             self._cookies = Cookie.SimpleCookie()
         return self._cookies
 
-    def set_cookie(self, key, value, secret=None, **kargs):
+    def set_cookie(self, key, value, secret=None, **kwargs):
         """Add a cookie or overwrite an old one. If the `secret` parameter is
         set, create a `Signed Cookie` (described below).
 
@@ -460,10 +454,11 @@ class WebMessageHandler(MessageHandler):
         elif not isinstance(value, basestring):
             raise TypeError('Secret missing for non-string Cookie.')
 
+        # Set cookie value
         self.cookies[key] = value
-        
+
         # handle keywords
-        for k, v in kargs.iteritems():
+        for k, v in kwargs.iteritems():
             self.cookies[key][k.replace('_', '-')] = v
 
     def delete_cookie(self, key, **kwargs):
